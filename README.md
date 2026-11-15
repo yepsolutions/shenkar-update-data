@@ -93,8 +93,8 @@ See `.env.example`. Required: `MONDAY_API_TOKEN`, `WEBHOOK_TOKEN`. **`DRY_RUN` d
 npm install
 npm test            # unit + integration tests against an in-memory fake monday
 npm run build
-cp .env.example .env   # fill in, then:
-set -a; source .env; set +a; npm run dev
+cp .env.example .env   # fill in MONDAY_API_TOKEN and WEBHOOK_TOKEN (e.g. `openssl rand -hex 24`)
+npm run dev            # `dev` and `start` load .env automatically
 curl -s -XPOST localhost:3000/webhooks/monday -H 'content-type: application/json' -d '{"challenge":"abc"}'
 ```
 Expose locally with a tunnel (e.g. `ngrok http 3000`) for monday to reach it.
