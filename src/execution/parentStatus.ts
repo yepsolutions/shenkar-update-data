@@ -1,25 +1,24 @@
 import { text, type MondayApi } from "../domain";
 import type { Logger } from "../logger";
-import { LABELS, PARENT_BOARD_ID, PARENT_COLS, SUB_COLS } from "../mapping/boards";
+import { LABELS, PARENT_BOARD_ID, PARENT_COLS, SUBITEM_BOARD_ID, SUB_COLS } from "../mapping/boards";
 import type { Store } from "../store/store";
 
 /**
- * Parent application status (color_mm9085gm) from each subitem's decision (color_mm90s5mz) and sync status (color_mm90k1tq):
+ * Parent application status (color_mm9085gm) from each subitem's decision (color_mm90s5mz) and sync status (color_mm90k1tq).
+ * A rejected subitem is marked בוצע (nothing is executed for it) so that "done" is uniform across subitems:
  *   1. no subitems                                          → טרם הוחל (default)
  *   2. at least one subitem not yet approved/rejected       → בתהליך
- *   3. every approved subitem is בוצע (rejected ones are ignored: nothing is changed for them,
- *      so their sync status stays טרם בוצע; if all were rejected there is nothing to execute) → הושלם
- *   4. otherwise some approved subitem is not done: nothing executed yet (all טרם בוצע) → טרם הוחל,
- *      otherwise (in progress, failed, or partly done)      → בתהליך
+ *   3. every subitem (rejected ones included) is בוצע        → הושלם
+ *   4. otherwise: nothing executed yet for the approved ones → טרם הוחל; any approved one started (running,
+ *      failed, done) but not all finished                    → בתהליך
  * Only existing parent labels are used.
  */
 export function deriveApplicationStatus(subs: Array<{ decision: string; sync: string }>): string {
   if (subs.length === 0) return LABELS.appNotApplied;
   if (subs.some((s) => s.decision !== LABELS.approved && s.decision !== LABELS.rejected)) return LABELS.appRunning;
-  const approved = subs.filter((s) => s.decision === LABELS.approved);
-  if (approved.every((s) => s.sync === LABELS.syncDone)) return LABELS.appDone;
-  const untouched = approved.every((s) => s.sync === LABELS.syncNotDone || s.sync === "");
-  return untouched ? LABELS.appNotApplied : LABELS.appRunning;
+  if (subs.every((s) => s.sync === LABELS.syncDone)) return LABELS.appDone;
+  const started = subs.some((s) => s.decision === LABELS.approved && s.sync !== LABELS.syncNotDone && s.sync !== "");
+  return started ? LABELS.appRunning : LABELS.appNotApplied;
 }
 
 /**
@@ -41,6 +40,14 @@ export function resolveParentLabel(wanted: string, live: string[]): string | nul
 export async function syncParentOnce(api: MondayApi, parentId: string, liveLabels?: string[]): Promise<string | null> {
   const [parent, subs] = await Promise.all([api.getItem(parentId), api.listSubitems(parentId)]);
   if (!parent || parent.boardId !== PARENT_BOARD_ID) return null;
+  // Rejected subitems are never executed: mark them בוצע (also backfills older rejected ones). Only the sync
+  // column of REJECTED subitems is written; approved/pending subitems are never touched here.
+  for (const sub of subs) {
+    if (text(sub, SUB_COLS.decision) === LABELS.rejected && text(sub, SUB_COLS.sync) !== LABELS.syncDone) {
+      await api.changeColumns(SUBITEM_BOARD_ID, sub.id, { [SUB_COLS.sync]: { label: LABELS.syncDone } });
+      sub.columns[SUB_COLS.sync] = { type: "status", text: LABELS.syncDone, value: null };
+    }
+  }
   const labels =
     liveLabels ??
     ((await api.getBoardColumns(PARENT_BOARD_ID)).find((c) => c.id === PARENT_COLS.application)?.labels ?? []).map((l) => l.label);

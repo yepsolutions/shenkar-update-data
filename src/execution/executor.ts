@@ -123,6 +123,12 @@ export class Executor {
     }
     const { owner, row } = claim;
     log.info("change_claimed", { changeId, phase: row.phase, attempt: row.attempts });
+    if (text(sub, SUB_COLS.sync) === LABELS.syncDone && row.phase === "validating") {
+      // Stale בוצע (e.g. the subitem was rejected, which marks it בוצע, and then approved again): this change
+      // is not applied yet, so show it as in progress right away so the parent cannot look completed.
+      await this.setSyncQuiet(subitemId, LABELS.syncRunning);
+      await this.refreshParent(sub.parentId);
+    }
 
     try {
       const out = await this.run(changeId, owner, subitemId, row.phase, row.intent, row.result_item_id);
@@ -180,7 +186,8 @@ export class Executor {
     const detail = e instanceof Error && e.message !== code && !(e instanceof MondayRejectedError) ? e.message : undefined;
     log.warn("change_not_applied", { changeId, state, code, detail });
     if (writeSync) {
-      await this.setSyncQuiet(subitemId, LABELS.syncFailed);
+      // A change rejected while it was being processed is not a failure; the parent refresh marks it בוצע.
+      if (code !== "NO_LONGER_APPROVED") await this.setSyncQuiet(subitemId, LABELS.syncFailed);
       await this.refreshParent(parentId);
     }
     return { status: state, changeId, code };

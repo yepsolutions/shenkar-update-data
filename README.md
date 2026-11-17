@@ -69,12 +69,17 @@ The same last-executed-wins rule applies (records are re-fetched at execution ti
 ## Sync / parent status
 Subitem `color_mm90k1tq`: `בתהליך` → `בוצע` / `נכשל`.
 
-Parent application status `color_mm9085gm` combines each subitem's decision (`color_mm90s5mz`) and execution status (`color_mm90k1tq`), read from monday:
+Parent application status `color_mm9085gm` combines each subitem's decision (`color_mm90s5mz`) and sync status (`color_mm90k1tq`), read from monday.
+**A rejected subitem is marked `בוצע`** (nothing is executed for it) by the parent recalculation, which also backfills older rejected
+subitems; only rejected subitems' sync column is ever written this way. Then:
 
 * no subitems → `טרם הוחל` (default)
-* at least one subitem not yet approved or rejected → `בתהליך`
-* every **approved** subitem is `בוצע` → `הושלם`. Rejected subitems are ignored (nothing is changed for them, so their sync status stays `טרם בוצע`); if all were rejected there is nothing to execute, so also `הושלם`
-* otherwise an approved subitem is not done yet: if none has started (all `טרם בוצע`) → `טרם הוחל`; if any is running, failed or partly done → `בתהליך`
+* at least one subitem not yet approved or rejected → `בתהליך` (even if its sync column still says `בוצע`)
+* **every** subitem, rejected ones included, is `בוצע` → `הושלם`
+* otherwise: no approved subitem has started yet (all `טרם בוצע`) → `טרם הוחל`; any approved one running, failed or partly done → `בתהליך`
+
+If a rejected subitem is approved again, its stale `בוצע` is reset to `בתהליך` as soon as its change is claimed, so the parent cannot look
+completed before the change really ran. A change rejected while it is being processed is not marked `נכשל`.
 
 It is recalculated after every execution and whenever a
 reviewer sets a decision to `נדחה` or `ממתין לאישור` (the webhook enqueues a parent-refresh job), because rejecting the last pending
