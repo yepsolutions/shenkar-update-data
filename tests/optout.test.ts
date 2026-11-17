@@ -20,7 +20,7 @@ describe("community interest opt-out", () => {
     expect(await w.exec.process(s)).toMatchObject({ status: "applied" });
     expect(writes(w)).toHaveLength(0);
     expect(syncOf(w, s)).toBe("בוצע");
-    expect(w.fake.col("100", "color_mm9085gm")).toBe("בוצע");
+    expect(w.fake.col("100", "color_mm9085gm")).toBe("הושלם");
   });
 
   it("all records already לא מעוניין: no writes, change marked done", async () => {
@@ -132,13 +132,14 @@ describe("community interest opt-out", () => {
     expect(status(w, "600")).toBe("לא מעוניין");
     expect(status(w, "601")).toBe("מעוניין");
     expect(syncOf(w, s)).toBe("נכשל");
-    expect(w.fake.col("100", "color_mm9085gm")).toBe("תקוע");
+    expect(w.fake.col("100", "color_mm9085gm")).toBe("בתהליך"); // approved change failed ⇒ not הושלם
     // reviewer re-approves → duplicate-safe retry
     expect((await w.exec.process(s)).status).toBe("applied");
     expect(writes(w).map((m) => m.args.itemId)).toEqual(["600", "601", "602"]); // 600 once; retry writes only 601, 602
     expect(writes(w).filter((m) => m.args.itemId === "600")).toHaveLength(1); // not re-written
     expect([status(w, "600"), status(w, "601"), status(w, "602")]).toEqual(["לא מעוניין", "לא מעוניין", "לא מעוניין"]);
     expect(syncOf(w, s)).toBe("בוצע");
+    expect(w.fake.col("100", "color_mm9085gm")).toBe("הושלם"); // all approved changes now done
   });
 
   it("lost response after a write that DID apply: reconciled, finished without extra writes", async () => {

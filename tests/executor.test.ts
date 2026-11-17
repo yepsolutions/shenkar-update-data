@@ -14,7 +14,7 @@ describe("update", () => {
     expect(out.status).toBe("applied");
     expect(w.fake.col("400", "job_title")).toBe("מנהלת עיצוב");
     expect(sync(w, s)).toBe("בוצע");
-    expect(w.fake.col(PARENT, "color_mm9085gm")).toBe("בוצע");
+    expect(w.fake.col(PARENT, "color_mm9085gm")).toBe("הושלם");
     expect(w.fake.col(PARENT, "req_status")).toBe("ממתין לטיפול"); // reviewer decision untouched
   });
 

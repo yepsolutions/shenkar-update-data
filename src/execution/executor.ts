@@ -39,6 +39,29 @@ export class Executor {
     this.parents = new ParentStatusSync(d.api, d.store, d.log, d.dryRun);
   }
 
+  /** For an applied create: the id of its record if that record no longer exists/active on the expected board. */
+  private async missingCreatedRecord(changeId: string): Promise<string | null> {
+    const row = this.d.store.get(changeId);
+    if (!row || row.state !== "applied" || !row.result_item_id || !row.intent) return null;
+    let intent: { kind?: string; boardId?: string };
+    try {
+      intent = JSON.parse(row.intent);
+    } catch {
+      return null;
+    }
+    if (intent.kind !== "create") return null; // updates / deletes / opt-outs are never re-applied
+    const item = await this.d.api.getItem(row.result_item_id); // transient errors propagate → job retried
+    const present = !!item && item.boardId === intent.boardId && item.state === "active";
+    return present ? null : row.result_item_id;
+  }
+
+  /** A reviewer changed a decision (e.g. rejected): recalculate the parent of that subitem. */
+  async refreshParentOfSubitem(subitemId: string): Promise<void> {
+    const sub = await this.d.api.getItem(subitemId); // transient errors propagate → job retried
+    if (!sub || sub.boardId !== SUBITEM_BOARD_ID || !sub.parentId) return;
+    await this.refreshParent(sub.parentId);
+  }
+
   /** Retry parent-status updates that failed earlier (called periodically by the worker). */
   sweepParents(): Promise<number> {
     return this.parents.sweep();
@@ -85,7 +108,15 @@ export class Executor {
       return { status: "ignored", reason: "invalid_change_id" };
     }
 
-    const claim = store.claim(changeId, subitemId, sub.parentId ?? null);
+    let claim = store.claim(changeId, subitemId, sub.parentId ?? null);
+    if (!claim.acquired && claim.reason === "applied" && !this.d.dryRun) {
+      // Safety net for created records: if the record this change created is gone, create it again.
+      const missing = await this.missingCreatedRecord(changeId);
+      if (missing && store.reopenAppliedCreate(changeId, missing)) {
+        log.warn("created_record_missing_reapplying", { changeId });
+        claim = store.claim(changeId, subitemId, sub.parentId ?? null);
+      }
+    }
     if (!claim.acquired) {
       log.info("change_skipped", { changeId, reason: claim.reason });
       return { status: "skipped", reason: claim.reason, changeId };
@@ -145,7 +176,9 @@ export class Executor {
       if (le instanceof LeaseLostError) return { status: "lease_lost", changeId };
       throw le;
     }
-    log.warn("change_not_applied", { changeId, state, code });
+    // Detail = column/board ids only (never values); helps diagnose SCHEMA_DRIFT etc.
+    const detail = e instanceof Error && e.message !== code && !(e instanceof MondayRejectedError) ? e.message : undefined;
+    log.warn("change_not_applied", { changeId, state, code, detail });
     if (writeSync) {
       await this.setSyncQuiet(subitemId, LABELS.syncFailed);
       await this.refreshParent(parentId);

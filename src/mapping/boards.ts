@@ -40,11 +40,10 @@ export const LABELS = {
   syncRunning: "בתהליך",
   syncDone: "בוצע",
   syncFailed: "נכשל",
+  /** Parent application status labels (color_mm9085gm) as they exist on the live board. */
   appNotApplied: "טרם הוחל",
-  appRunning: "מתבצע",
-  appDone: "בוצע",
-  appStuck: "תקוע",
-  appCancelled: "בוטל",
+  appRunning: "בתהליך",
+  appDone: "הושלם",
   opCreate: "הוספה",
   opUpdate: "עדכון",
   opDelete: "מחיקה",
@@ -210,7 +209,11 @@ export const boardByLabel = (label: string): BoardSpec | undefined =>
 export const boardById = (id: string): BoardSpec | undefined =>
   Object.values(BOARDS).find((b) => b.id === id);
 
-/** Control-column labels that must exist for the workflow to operate. */
+/**
+ * Control-column labels that must exist for changes to be applied. The parent application-status column is
+ * deliberately NOT here: parent status is best-effort and must never block applying an approved change
+ * (see parentStatus.ts, which adapts to the labels that exist on the live parent column).
+ */
 export const REQUIRED_CONTROL_LABELS: Array<{ boardId: string; column: string; labels: string[] }> = [
   { boardId: SUBITEM_BOARD_ID, column: SUB_COLS.decision, labels: [LABELS.approved] },
   {
@@ -219,9 +222,4 @@ export const REQUIRED_CONTROL_LABELS: Array<{ boardId: string; column: string; l
     labels: [LABELS.syncRunning, LABELS.syncDone, LABELS.syncFailed],
   },
   { boardId: "5107221003", column: "interest_status", labels: [OPT_OUT_STATUS_LABEL] },
-  {
-    boardId: PARENT_BOARD_ID,
-    column: PARENT_COLS.application,
-    labels: [LABELS.appRunning, LABELS.appDone, LABELS.appStuck, LABELS.appCancelled],
-  },
 ];

@@ -46,6 +46,8 @@ describe("logging & config", () => {
     expect(loadConfig({ ...base, DRY_RUN: "" }).DRY_RUN).toBe(true);
     expect(loadConfig({ ...base, DRY_RUN: "false" }).DRY_RUN).toBe(false);
     expect(() => loadConfig({ ...base, WEBHOOK_TOKEN: "short" })).toThrow(/WEBHOOK_TOKEN/);
+    expect(loadConfig({ MONDAY_API_TOKEN: base.MONDAY_API_TOKEN }).WEBHOOK_TOKEN).toBeUndefined();
+    expect(loadConfig({ ...base, WEBHOOK_TOKEN: "" }).WEBHOOK_TOKEN).toBeUndefined();
   });
 });
 

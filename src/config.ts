@@ -7,7 +7,8 @@ const bool = (def: boolean) =>
 const schema = z.object({
   MONDAY_API_TOKEN: z.string().min(10),
   MONDAY_API_VERSION: z.preprocess(emptyToUndef, z.string().default("2025-10")),
-  WEBHOOK_TOKEN: z.string().min(24, "WEBHOOK_TOKEN must be at least 24 characters"),
+  /** Optional. When set, webhook requests must carry ?token=<value>. */
+  WEBHOOK_TOKEN: z.preprocess(emptyToUndef, z.string().min(24, "WEBHOOK_TOKEN must be at least 24 characters").optional()),
   MONDAY_SIGNING_SECRET: z.preprocess(emptyToUndef, z.string().min(10).optional()),
   ADMIN_TOKEN: z.preprocess(emptyToUndef, z.string().min(24).optional()),
   DB_PATH: z.preprocess(emptyToUndef, z.string().default("./data/state.sqlite")),

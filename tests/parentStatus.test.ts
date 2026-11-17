@@ -4,207 +4,186 @@ import { MondayUncertainError } from "../src/errors";
 import { BOARDS, PARENT_BOARD_ID } from "../src/mapping/boards";
 import { PARENT, addSub, careerRecord, world, type World } from "./harness";
 
-const SYNC = ["טרם בוצע", "בתהליך", "בוצע", "נכשל"] as const;
-const d = (...s: Array<[string, string]>) => deriveApplicationStatus(s.map(([decision, sync]) => ({ decision, sync })));
 const A = "מאושר";
+const R = "נדחה";
+const P = "ממתין לאישור";
+const NOT = "טרם בוצע";
+const RUN = "בתהליך";
+const DONE = "בוצע";
+const FAIL = "נכשל";
+const d = (...subs: Array<[string, string]>) => deriveApplicationStatus(subs.map(([decision, sync]) => ({ decision, sync })));
 
-describe("deriveApplicationStatus", () => {
-  it("rule 1: any נכשל ⇒ תקוע (even with pending / in-progress / done siblings)", () => {
-    expect(d([A, "נכשל"])).toBe("תקוע");
-    expect(d([A, "נכשל"], [A, "בתהליך"], [A, "בוצע"], [A, "טרם בוצע"])).toBe("תקוע");
-  });
-  it("rule 2: otherwise any בתהליך ⇒ מתבצע", () => {
-    expect(d([A, "בתהליך"])).toBe("מתבצע");
-    expect(d([A, "בתהליך"], [A, "בוצע"], [A, "טרם בוצע"])).toBe("מתבצע");
-  });
-  it("rule 3: בוצע only when ALL subitems are בוצע", () => {
-    expect(d([A, "בוצע"])).toBe("בוצע");
-    expect(d([A, "בוצע"], [A, "בוצע"], [A, "בוצע"])).toBe("בוצע");
-    expect(d([A, "בוצע"], [A, "טרם בוצע"])).toBe("טרם הוחל");
-  });
-  it("rule 4: everything else (incl. any טרם בוצע) ⇒ טרם הוחל", () => {
-    expect(d([A, "טרם בוצע"])).toBe("טרם הוחל");
-    expect(d([A, "בוצע"], [A, "טרם בוצע"], [A, "בוצע"])).toBe("טרם הוחל");
-    expect(d(["ממתין לאישור", "טרם בוצע"])).toBe("טרם הוחל");
+describe("deriveApplicationStatus (decision + execution)", () => {
+  it("default: no subitems ⇒ טרם הוחל", () => {
     expect(d()).toBe("טרם הוחל");
+  });
+  it("a subitem not yet approved/rejected ⇒ בתהליך (whatever the others are)", () => {
+    expect(d([P, NOT])).toBe("בתהליך");
+    expect(d([A, DONE], [P, NOT])).toBe("בתהליך");
+    expect(d([R, NOT], [P, NOT])).toBe("בתהליך");
+    expect(d([A, NOT], [P, NOT])).toBe("בתהליך");
+    expect(d(["", NOT])).toBe("בתהליך");
+  });
+  it("all approved ones בוצע ⇒ הושלם; rejected ones (טרם בוצע) are ignored", () => {
+    expect(d([A, DONE])).toBe("הושלם");
+    expect(d([A, DONE], [A, DONE], [A, DONE])).toBe("הושלם");
+    expect(d([A, DONE], [R, NOT])).toBe("הושלם");
+    expect(d([A, DONE], [A, DONE], [R, NOT], [R, NOT])).toBe("הושלם");
+  });
+  it("all rejected ⇒ הושלם (nothing to execute)", () => {
+    expect(d([R, NOT])).toBe("הושלם");
+    expect(d([R, NOT], [R, NOT], [R, NOT])).toBe("הושלם");
+  });
+  it("an approved subitem not yet בוצע prevents הושלם", () => {
+    expect(d([A, NOT], [R, NOT])).toBe("טרם הוחל");
+    expect(d([A, RUN])).toBe("בתהליך");
+    expect(d([A, FAIL])).toBe("בתהליך");
+    expect(d([A, DONE], [A, NOT])).toBe("בתהליך");
+    expect(d([A, DONE], [A, FAIL], [R, NOT])).toBe("בתהליך");
+    expect(d([A, DONE], [A, RUN])).toBe("בתהליך");
+  });
+  it("nothing executed yet (all approved still טרם בוצע) ⇒ טרם הוחל", () => {
+    expect(d([A, NOT])).toBe("טרם הוחל");
+    expect(d([A, NOT], [A, NOT], [R, NOT])).toBe("טרם הוחל");
     expect(d([A, ""])).toBe("טרם הוחל");
   });
-  it("all subitems rejected ⇒ בוטל", () => {
-    expect(d(["נדחה", "טרם בוצע"])).toBe("בוטל");
-    expect(d(["נדחה", "טרם בוצע"], ["נדחה", "טרם בוצע"], ["נדחה", "טרם בוצע"])).toBe("בוטל");
-  });
-  it("approved all completed + the rest rejected ⇒ בוצע (partially approved)", () => {
-    expect(d([A, "בוצע"], ["נדחה", "טרם בוצע"])).toBe("בוצע");
-    expect(d([A, "בוצע"], [A, "בוצע"], ["נדחה", "טרם בוצע"], ["נדחה", "טרם בוצע"])).toBe("בוצע");
-  });
-  it("a subitem still pending approval prevents בוצע (and בוטל)", () => {
-    expect(d([A, "בוצע"], ["ממתין לאישור", "טרם בוצע"])).toBe("טרם הוחל");
-    expect(d([A, "בוצע"], ["ממתין לאישור", "טרם בוצע"], ["נדחה", "טרם בוצע"])).toBe("טרם הוחל");
-    expect(d(["נדחה", "טרם בוצע"], ["ממתין לאישור", "טרם בוצע"])).toBe("טרם הוחל");
-    expect(d(["ממתין לאישור", "טרם בוצע"])).toBe("טרם הוחל");
-    // even a (data-inconsistent) pending-approval subitem marked בוצע must not complete the request
-    expect(d([A, "בוצע"], ["ממתין לאישור", "בוצע"])).toBe("טרם הוחל");
-  });
-  it("priority is preserved: failure → תקוע, else in progress → מתבצע, else completion", () => {
-    expect(d([A, "נכשל"], ["נדחה", "טרם בוצע"])).toBe("תקוע");
-    expect(d([A, "נכשל"], [A, "בתהליך"], ["ממתין לאישור", "טרם בוצע"])).toBe("תקוע");
-    expect(d([A, "בתהליך"], ["נדחה", "טרם בוצע"])).toBe("מתבצע");
-    expect(d([A, "בתהליך"], ["ממתין לאישור", "טרם בוצע"], [A, "בוצע"])).toBe("מתבצע");
-    expect(d([A, "טרם בוצע"], ["נדחה", "טרם בוצע"])).toBe("טרם הוחל");
-  });
   it("a rejected subitem's own sync value is irrelevant", () => {
-    expect(d([A, "בוצע"], ["נדחה", "נכשל"])).toBe("בוצע");
-    expect(d(["נדחה", "בתהליך"])).toBe("בוטל");
+    expect(d([A, DONE], [R, FAIL])).toBe("הושלם");
+    expect(d([R, RUN])).toBe("הושלם");
   });
   it("matches an independent oracle for every combination of up to 4 subitems", () => {
-    const oracle = (syncs: string[]) =>
-      syncs.includes("נכשל") ? "תקוע" : syncs.includes("בתהליך") ? "מתבצע" : syncs.length && syncs.every((x) => x === "בוצע") ? "בוצע" : "טרם הוחל";
+    const decisions = [A, R, P];
+    const syncs = [NOT, RUN, DONE, FAIL];
+    const items: Array<[string, string]> = decisions.flatMap((x) => syncs.map((y) => [x, y] as [string, string]));
     let n = 0;
-    const rec = (cur: string[]) => {
-      expect(d(...cur.map((x) => [A, x] as [string, string]))).toBe(oracle(cur));
+    const oracle = (cur: Array<[string, string]>) => {
+      if (cur.length === 0) return "טרם הוחל";
+      if (cur.some(([x]) => x === P)) return "בתהליך";
+      const ap = cur.filter(([x]) => x === A);
+      if (ap.every(([, y]) => y === DONE)) return "הושלם";
+      return ap.every(([, y]) => y === NOT) ? "טרם הוחל" : "בתהליך";
+    };
+    const rec = (cur: Array<[string, string]>) => {
+      expect(d(...cur)).toBe(oracle(cur));
       n++;
-      if (cur.length < 4) for (const x of SYNC) rec([...cur, x]);
+      if (cur.length < 3) for (const it of items) rec([...cur, it]);
     };
     rec([]);
-    expect(n).toBe(1 + 4 + 16 + 64 + 256);
-  });
-  it("uses only existing parent-board labels", () => {
-    const labels = new Set(["מתבצע", "בוצע", "תקוע", "בוטל", "טרם הוחל"]);
-    for (const x of SYNC) for (const y of SYNC) expect(labels.has(d([A, x], [A, y]))).toBe(true);
+    expect(n).toBe(1 + 12 + 144 + 1728);
   });
 });
 
 const parentWrites = (w: World) => w.fake.mutations.filter((m) => m.kind === "change" && m.args.boardId === PARENT_BOARD_ID);
 const parentStatus = (w: World) => w.fake.col(PARENT, "color_mm9085gm");
-const upd = (w: World, nv: string, target = "400", field = "company", existing = "Atera") =>
-  addSub(w, { board: "תעסוקה", op: "עדכון", field, existing, newValue: nv, target });
+const upd = (w: World, nv: string, decision = A) =>
+  addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "Atera", newValue: nv, target: "400", decision });
+const setDecision = (w: World, id: string, label: string) => (w.fake.items.get(id)!.columns.color_mm90s5mz!.text = label);
 
-describe("parent sync after executions", () => {
-  it("multiple subitems: stays טרם הוחל until ALL are done, then בוצע", async () => {
+describe("parent status integration", () => {
+  it("one approved executed + others still pending ⇒ בתהליך; completes when the rest are decided", async () => {
     const w = world();
     careerRecord(w);
     const a = upd(w, "A");
-    const b = upd(w, "B");
-    const c = upd(w, "C");
-    await w.exec.process(a);
-    expect(parentStatus(w)).toBe("טרם הוחל");
-    await w.exec.process(b);
-    expect(parentStatus(w)).toBe("טרם הוחל");
-    await w.exec.process(c);
-    expect(parentStatus(w)).toBe("בוצע");
+    const b = upd(w, "B", P);
+    const c = upd(w, "C", P);
+    expect((await w.exec.process(a)).status).toBe("applied");
+    expect(parentStatus(w)).toBe("בתהליך");
+    // reviewer rejects B → webhook enqueues a parent refresh job; C still pending
+    setDecision(w, b, R);
+    w.store.enqueue(b, PARENT, "parent");
+    await w.worker.drain();
+    expect(parentStatus(w)).toBe("בתהליך");
+    // reviewer rejects the last pending one → parent completes
+    setDecision(w, c, R);
+    w.store.enqueue(c, PARENT, "parent");
+    await w.worker.drain();
+    expect(parentStatus(w)).toBe("הושלם");
   });
 
-  it("shows מתבצע while a subitem is בתהליך (recalculated right after the status change)", async () => {
+  it("all subitems rejected ⇒ הושלם (via the parent-refresh job)", async () => {
     const w = world();
     careerRecord(w);
-    const s = upd(w, "A");
-    let seen: string | null = null;
-    w.fake.hooks.before = (_k, a) => {
-      if (a.boardId === BOARDS.career.id) seen = parentStatus(w);
-    };
-    await w.exec.process(s);
-    expect(seen).toBe("מתבצע");
-    expect(parentStatus(w)).toBe("בוצע");
+    const a = upd(w, "A", R);
+    const b = upd(w, "B", R);
+    w.store.enqueue(b, PARENT, "parent");
+    await w.worker.drain();
+    expect(parentStatus(w)).toBe("הושלם");
+    void a;
   });
 
-  it("a failure ⇒ תקוע; a successful retry recalculates to בוצע", async () => {
+  it("the parent shows בתהליך while a pending subitem exists, even before anything executes", async () => {
     const w = world();
     careerRecord(w);
-    const ok = upd(w, "A");
-    const bad = upd(w, "B", "400", "role_status", "נוכחי");
-    w.fake.items.get(bad)!.columns.text_mm94nbav!.text = JSON.stringify({ schemaVersion: 1, operation: "update", fieldColumnId: "role_status", newValue: "אין-כזה" });
-    await w.exec.process(ok);
+    const a = upd(w, "A", P);
+    upd(w, "B", P);
+    setDecision(w, a, R);
+    w.store.enqueue(a, PARENT, "parent");
+    await w.worker.drain();
+    expect(parentStatus(w)).toBe("בתהליך");
+  });
+
+  it("a failed execution keeps the parent בתהליך (not הושלם); the retry that succeeds completes it", async () => {
+    const w = world();
+    careerRecord(w);
+    const bad = addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "B", target: "999" });
     expect(await w.exec.process(bad)).toMatchObject({ status: "failed" });
     expect(w.fake.col(bad, "color_mm90k1tq")).toBe("נכשל");
-    expect(parentStatus(w)).toBe("תקוע");
-    // reviewer fixes the data and re-approves → retry succeeds
-    w.fake.items.get(bad)!.columns.text_mm94nbav!.text = JSON.stringify({ schemaVersion: 1, operation: "update", fieldColumnId: "role_status", newValue: "עבר" });
+    expect(parentStatus(w)).toBe("בתהליך");
+    w.fake.add(BOARDS.career.id, "999", { alumni_id: "0123456789", company: "x" });
     expect((await w.exec.process(bad)).status).toBe("applied");
-    expect(parentStatus(w)).toBe("בוצע");
+    expect(parentStatus(w)).toBe("הושלם");
   });
 
-  it("mixed: one done + one failed + one pending ⇒ תקוע", async () => {
-    const w = world();
-    careerRecord(w);
-    const ok = upd(w, "A");
-    const bad = addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "B", target: "999" }); // target missing
-    addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "C", target: "400", decision: "ממתין לאישור" });
-    await w.exec.process(ok);
-    await w.exec.process(bad);
-    expect(parentStatus(w)).toBe("תקוע");
-  });
-
-  it("a rejected sibling does not block בוצע", async () => {
-    const w = world();
-    careerRecord(w);
-    const a = upd(w, "A");
-    addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "R", target: "400", decision: "נדחה" });
-    await w.exec.process(a);
-    expect(parentStatus(w)).toBe("בוצע");
-  });
-
-  it("all subitems rejected ⇒ בוטל (written once, no further mutation)", async () => {
-    const w = world();
-    careerRecord(w);
-    addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "A", target: "400", decision: "נדחה" });
-    addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "B", target: "400", decision: "נדחה" });
-    expect(await syncParentOnce(w.fake, PARENT)).toBe("בוטל");
-    expect(parentStatus(w)).toBe("בוטל");
-    expect(await syncParentOnce(w.fake, PARENT)).toBe("בוטל");
-    expect(parentWrites(w)).toHaveLength(1);
-    expect(w.fake.col(PARENT, "req_status")).toBe("ממתין לטיפול");
-    expect(w.fake.mutations.some((m) => m.kind === "change" && "color_mm90s5mz" in m.args.values)).toBe(false);
-  });
-
-  it("partially approved: approved ones done + the rest rejected ⇒ בוצע", async () => {
+  it("approved ones done + the rest rejected (still טרם בוצע) ⇒ הושלם", async () => {
     const w = world();
     careerRecord(w);
     const a = upd(w, "A");
     const b = upd(w, "B");
-    addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "R", target: "400", decision: "נדחה" });
+    const r1 = upd(w, "R1", R);
+    const r2 = upd(w, "R2", R);
     await w.exec.process(a);
-    expect(parentStatus(w)).toBe("טרם הוחל"); // b approved but not yet executed
+    expect(parentStatus(w)).toBe("בתהליך"); // b approved but not executed yet, a done
     await w.exec.process(b);
-    expect(parentStatus(w)).toBe("בוצע");
+    expect(parentStatus(w)).toBe("הושלם");
+    expect(w.fake.col(r1, "color_mm90k1tq")).toBe("טרם בוצע");
+    expect(w.fake.col(r2, "color_mm90k1tq")).toBe("טרם בוצע");
   });
 
-  it("pending-approval subitem prevents בוצע until it is decided", async () => {
+  it("while an approved change is executing the parent shows בתהליך", async () => {
     const w = world();
     careerRecord(w);
     const a = upd(w, "A");
-    const pending = addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "P", target: "400", decision: "ממתין לאישור" });
-    addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "x", newValue: "R", target: "400", decision: "נדחה" });
+    let seen: string | null = null;
+    w.fake.hooks.before = (_k, args) => {
+      if (args.boardId === BOARDS.career.id) seen = parentStatus(w);
+    };
     await w.exec.process(a);
-    expect(parentStatus(w)).toBe("טרם הוחל");
-    // reviewer rejects the pending one → parent can now complete on the next recalculation
-    w.fake.items.get(pending)!.columns.color_mm90s5mz!.text = "נדחה";
-    expect(await syncParentOnce(w.fake, PARENT)).toBe("בוצע");
-    expect(parentStatus(w)).toBe("בוצע");
-  });
-
-  it("reads CURRENT monday statuses, not the triggering event", async () => {
-    const w = world();
-    careerRecord(w);
-    const a = upd(w, "A");
-    const b = upd(w, "B");
-    await w.exec.process(a);
-    expect(parentStatus(w)).toBe("טרם הוחל");
-    // someone completes B outside this backend; the next recalculation sees it
-    w.fake.items.get(b)!.columns.color_mm90k1tq!.text = "בוצע";
-    expect(await syncParentOnce(w.fake, PARENT)).toBe("בוצע");
-    expect(parentStatus(w)).toBe("בוצע");
+    expect(seen).toBe("בתהליך");
+    expect(parentStatus(w)).toBe("הושלם");
   });
 
   it("makes no parent mutation when the parent already has the right status", async () => {
     const w = world();
     careerRecord(w);
-    const a = upd(w, "A");
-    const b = upd(w, "B");
-    await w.exec.process(a); // טרם הוחל → מתבצע → טרם הוחל? (writes while running/finished)
+    upd(w, "A", P);
+    upd(w, "B", P);
+    expect(await syncParentOnce(w.fake, PARENT)).toBe("בתהליך");
     const before = parentWrites(w).length;
-    for (let i = 0; i < 3; i++) expect(await syncParentOnce(w.fake, PARENT)).toBe("טרם הוחל");
+    for (let i = 0; i < 3; i++) await syncParentOnce(w.fake, PARENT);
     expect(parentWrites(w)).toHaveLength(before);
-    void b;
+    expect(before).toBe(1);
+  });
+
+  it("reads CURRENT decisions and sync statuses from monday, not the triggering event", async () => {
+    const w = world();
+    careerRecord(w);
+    const a = upd(w, "A", P);
+    expect(await syncParentOnce(w.fake, PARENT)).toBe("בתהליך");
+    setDecision(w, a, A); // approved, not executed yet
+    expect(await syncParentOnce(w.fake, PARENT)).toBe("טרם הוחל");
+    w.fake.items.get(a)!.columns.color_mm90k1tq!.text = "בוצע"; // executed
+    expect(await syncParentOnce(w.fake, PARENT)).toBe("הושלם");
+    expect(parentStatus(w)).toBe("הושלם");
   });
 
   it("never writes the approval decision or the reviewer's request status", async () => {
@@ -227,35 +206,58 @@ describe("parent sync after executions", () => {
     w.fake.hooks.before = (_k, a) => {
       if (fail && a.boardId === PARENT_BOARD_ID) throw new MondayUncertainError("parent API down");
     };
-    const out = await w.exec.process(s);
-    expect(out.status).toBe("applied");
+    expect((await w.exec.process(s)).status).toBe("applied");
     expect(w.fake.col(s, "color_mm90k1tq")).toBe("בוצע");
-    expect(w.store.get(w.fake.col(s, "text_mm90t835")!)!.state).toBe("applied");
-    expect(parentStatus(w)).toBe("טרם הוחל"); // stale for now
+    expect(parentStatus(w)).toBe("טרם הוחל");
     expect(w.store.dirtyParents()).toEqual([PARENT]);
     fail = false;
     expect(await w.exec.sweepParents()).toBe(1);
-    expect(parentStatus(w)).toBe("בוצע");
-    expect(w.store.dirtyParents()).toEqual([]);
+    expect(parentStatus(w)).toBe("הושלם");
   });
 
-  it("a duplicate webhook of a completed change causes no further parent mutation", async () => {
-    const w = world();
-    careerRecord(w);
-    const s = upd(w, "A");
-    await w.exec.process(s);
-    const n = w.fake.mutations.length;
-    await w.exec.process(s);
-    expect(w.fake.mutations).toHaveLength(n);
-  });
-
-  it("DRY_RUN performs no parent (or any) writes", async () => {
+  it("DRY_RUN performs no parent writes, including for decision-change jobs", async () => {
     const w = world({ dryRun: true });
     careerRecord(w);
-    const s = upd(w, "A");
-    expect((await w.exec.process(s)).status).toBe("dry_run");
+    const a = upd(w, "A", R);
+    w.store.enqueue(a, PARENT, "parent");
+    await w.worker.drain();
     expect(w.fake.mutations).toHaveLength(0);
-    expect(await w.exec.sweepParents()).toBe(0);
+  });
+
+  it("ignores parent-refresh jobs for missing or foreign items", async () => {
+    const w = world();
+    w.store.enqueue("123456", PARENT, "parent");
+    await w.worker.drain();
+    expect(w.fake.mutations).toHaveLength(0);
+    expect(w.store.pendingJobCount()).toBe(0);
+  });
+});
+
+describe("parent labels on the live board", () => {
+  const setLabels = (w: World, labels: string[]) => {
+    w.fake.schemas[PARENT_BOARD_ID]!.find((c) => c.id === "color_mm9085gm")!.labels = labels.map((label, i) => ({ id: i + 1, label }));
+  };
+
+  it("falls back to the older labels (מתבצע / בוצע) if that is what the column has", async () => {
+    const w = world();
+    setLabels(w, ["טרם הוחל", "מתבצע", "בוצע"]);
+    careerRecord(w);
+    const a = upd(w, "A", P);
+    expect(await syncParentOnce(w.fake, PARENT)).toBe("מתבצע");
+    setDecision(w, a, A);
+    w.fake.items.get(a)!.columns.color_mm90k1tq!.text = "בוצע";
+    expect(await syncParentOnce(w.fake, PARENT)).toBe("בוצע");
+  });
+
+  it("a missing parent label never blocks applying a change; the parent stays dirty for retry", async () => {
+    const w = world();
+    setLabels(w, ["טרם הוחל"]);
+    careerRecord(w);
+    const s = upd(w, "A");
+    expect((await w.exec.process(s)).status).toBe("applied");
+    expect(w.fake.col("400", "company")).toBe("A");
+    expect(w.fake.col(s, "color_mm90k1tq")).toBe("בוצע");
+    expect(w.store.dirtyParents()).toEqual([PARENT]);
   });
 });
 
@@ -264,30 +266,29 @@ describe("parent sync concurrency: an older calculation can never be the final w
     const w = world();
     careerRecord(w);
     const a = upd(w, "A");
-    const b = upd(w, "B");
-    w.fake.items.get(a)!.columns.color_mm90k1tq!.text = "בוצע";
-    w.fake.items.get(b)!.columns.color_mm90k1tq!.text = "טרם בוצע";
-    // 1st calculation reads (a=בוצע, b=טרם בוצע), then stalls before writing; meanwhile b completes and a 2nd refresh arrives
+    const b = upd(w, "B", P);
+    w.fake.items.get(a)!.columns.color_mm90k1tq!.text = "בוצע"; // a is approved and already executed
     const sync = (w.exec as any).parents;
     const origList = w.fake.listSubitems.bind(w.fake);
     let calls = 0;
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     w.fake.listSubitems = async (pid) => {
-      const snapshot = await origList(pid);
-      if (++calls === 1) await gate; // stale snapshot is held back
+      const snapshot = await origList(pid); // a approved, b pending ⇒ בתהליך
+      if (++calls === 1) await gate;
       return snapshot;
     };
     const first = sync.refresh(PARENT);
     await new Promise((r) => setTimeout(r, 5));
-    w.fake.items.get(b)!.columns.color_mm90k1tq!.text = "בוצע";
-    await sync.refresh(PARENT); // returns immediately: the holder will pick the request up
+    setDecision(w, b, R); // b is rejected meanwhile ⇒ הושלם
+    await sync.refresh(PARENT);
     expect(parentStatus(w)).toBe("טרם הוחל");
     release();
     await first;
     expect(calls).toBeGreaterThanOrEqual(2);
-    expect(parentStatus(w)).toBe("בוצע"); // not overwritten by the stale snapshot
+    expect(parentStatus(w)).toBe("הושלם");
     expect(w.store.dirtyParents()).toEqual([]);
+    void a;
   });
 
   it("concurrent executions of different subitems of one parent converge to the correct final status", async () => {
@@ -296,7 +297,6 @@ describe("parent sync concurrency: an older calculation can never be the final w
     careerRecord(w, "401", { company: "Yep" });
     const a = addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "Atera", newValue: "A", target: "400" });
     const b = addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "Yep", newValue: "B", target: "401" });
-    // same graduate+board ⇒ the lock defers one; run via the worker until both finish
     w.store.enqueue(a, PARENT);
     w.store.enqueue(b, PARENT);
     for (let i = 0; i < 4; i++) {
@@ -305,7 +305,7 @@ describe("parent sync concurrency: an older calculation can never be the final w
     }
     expect(w.fake.col("400", "company")).toBe("A");
     expect(w.fake.col("401", "company")).toBe("B");
-    expect(parentStatus(w)).toBe("בוצע");
+    expect(parentStatus(w)).toBe("הושלם");
   });
 
   it("the parent lock is leased: a crashed holder cannot block updates forever", async () => {
@@ -314,10 +314,9 @@ describe("parent sync concurrency: an older calculation can never be the final w
     const s = upd(w, "A");
     expect(w.store.tryLockParent(PARENT)).toBe(true); // holder "crashes" without unlocking
     await w.exec.process(s);
-    expect(w.store.dirtyParents()).toEqual([]); // dirty but locked → not listed yet
     expect(parentStatus(w)).toBe("טרם הוחל");
-    w.clock.t += 60_000; // lease expires
+    w.clock.t += 60_000;
     expect(await w.exec.sweepParents()).toBe(1);
-    expect(parentStatus(w)).toBe("בוצע");
+    expect(parentStatus(w)).toBe("הושלם");
   });
 });

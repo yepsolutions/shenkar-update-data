@@ -7,7 +7,7 @@ Independent of the Alumni Portal and its SQLite database. Spec: `approval-subite
 ## How it works
 
 ```
-monday ──webhook──▶ POST /webhooks/monday ──▶ durable job queue (SQLite) ──▶ worker ──▶ executor ──▶ monday GraphQL
+monday ──webhook──▶ POST /handle-approval ──▶ durable job queue (SQLite) ──▶ worker ──▶ executor ──▶ monday GraphQL
         (challenge echoed first)   200 immediately        │                              │
                                                           └── per-change state machine (CHG-… idempotency key, lease, intent, reconcile)
 ```
@@ -69,35 +69,36 @@ The same last-executed-wins rule applies (records are re-fetched at execution ti
 ## Sync / parent status
 Subitem `color_mm90k1tq`: `בתהליך` → `בוצע` / `נכשל`.
 
-Parent application status `color_mm9085gm` is recalculated from the **current** subitem statuses read from monday after every
-execution result (in-progress, success, failure, retry), first match wins:
+Parent application status `color_mm9085gm` combines each subitem's decision (`color_mm90s5mz`) and execution status (`color_mm90k1tq`), read from monday:
 
-1. any subitem `נכשל` → `תקוע`
-2. else any `בתהליך` → `מתבצע`
-3. else every subitem was rejected (`נדחה`) → `בוטל`
-4. else all non-rejected subitems are approved and `בוצע` → `בוצע` (a subitem still pending approval prevents this)
-5. otherwise (e.g. any `טרם בוצע`) → `טרם הוחל`
+* no subitems → `טרם הוחל` (default)
+* at least one subitem not yet approved or rejected → `בתהליך`
+* every **approved** subitem is `בוצע` → `הושלם`. Rejected subitems are ignored (nothing is changed for them, so their sync status stays `טרם בוצע`); if all were rejected there is nothing to execute, so also `הושלם`
+* otherwise an approved subitem is not done yet: if none has started (all `טרם בוצע`) → `טרם הוחל`; if any is running, failed or partly done → `בתהליך`
 
-Only existing parent labels are used. **Rejected subitems (decision `נדחה`) are excluded** from rules 1–2 and 4: they are never
-executed, so they are neither failures nor blockers for "all done". The parent is written only when its label actually changes, and
-only that one column: the approval decisions (`color_mm90s5mz`) and the reviewer's `req_status` are never touched.
+It is recalculated after every execution and whenever a
+reviewer sets a decision to `נדחה` or `ממתין לאישור` (the webhook enqueues a parent-refresh job), because rejecting the last pending
+subitem completes the request. Only labels that exist on the live parent column are written, nothing is created (older names
+`מתבצע`/`בוצע` are used if the column still has those). The parent is written only when its label actually changes, and only that one
+column: the approval decisions and the reviewer's `req_status` are never touched. Parent-label problems never block applying a change.
 Concurrency: refreshes are serialized per parent by a durable leased lock + dirty flag; the holder recalculates from fresh monday state
 until no newer request arrived, so a stale calculation can never be the last write. A failed parent update never affects the subitem
 result: the parent stays dirty and the worker's periodic sweep retries it. Under `DRY_RUN=true` nothing is written.
 
 ## Environment
-See `.env.example`. Required: `MONDAY_API_TOKEN`, `WEBHOOK_TOKEN`. **`DRY_RUN` defaults to `true`** (reads + validation only, zero monday writes); set `DRY_RUN=false` explicitly to go live.
+See `.env.example`. Required: `MONDAY_API_TOKEN`. `WEBHOOK_TOKEN` is optional (if set, the webhook URL must end with `?token=<value>`; if unset the endpoint is open, which is safe because events only enqueue a subitem id and everything is re-verified in monday). **`DRY_RUN` defaults to `true`** (reads + validation only, zero monday writes); set `DRY_RUN=false` explicitly to go live.
 
 ## Local development
 ```bash
 npm install
 npm test            # unit + integration tests against an in-memory fake monday
 npm run build
-cp .env.example .env   # fill in MONDAY_API_TOKEN and WEBHOOK_TOKEN (e.g. `openssl rand -hex 24`)
-npm run dev            # `dev` and `start` load .env automatically
-curl -s -XPOST localhost:3000/webhooks/monday -H 'content-type: application/json' -d '{"challenge":"abc"}'
+cp .env.example .env   # fill in MONDAY_API_TOKEN
+npm run dev            # starts the backend AND the monday tunnel (prints the public URL); loads .env automatically
+npm run dev:server     # backend only
+curl -s -XPOST localhost:3000/handle-approval -H 'content-type: application/json' -d '{"challenge":"abc"}'
 ```
-Expose locally with a tunnel (e.g. `ngrok http 3000`) for monday to reach it.
+`npm run dev` also runs `mapps tunnel:create -p 3000` (monday apps CLI), which prints the public URL monday uses to reach your machine (port 3000; edit `dev:tunnel` in package.json if you change `PORT`).
 
 ## Webhook setup
 Per monday's docs, subitem column changes need the **`change_subitem_column_value`** event, created on the **parent board** (`5107220927`); `change_status_column_value` / `change_specific_column_value` do not cover subitem columns. The payload for this event is not documented, so the handler accepts `pulseId`/`itemId`, `columnId`, `value.label.text`, optional `parentItemId`, and re-verifies everything by re-fetching.
@@ -105,7 +106,7 @@ Per monday's docs, subitem column changes need the **`change_subitem_column_valu
 mutation {
   create_webhook(
     board_id: 5107220927
-    url: "https://YOUR_HOST/webhooks/monday?token=YOUR_WEBHOOK_TOKEN"
+    url: "https://YOUR_HOST/handle-approval"
     event: change_subitem_column_value
   ) { id board_id }
 }

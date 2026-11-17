@@ -31,6 +31,7 @@ export interface ChangeRow {
 
 export interface JobRow {
   id: number;
+  kind: "change" | "parent";
   subitem_id: string;
   expected_parent_id: string | null;
   attempts: number;
@@ -86,7 +87,13 @@ export class Store {
         dirty INTEGER NOT NULL DEFAULT 0,
         lock_until INTEGER NOT NULL DEFAULT 0
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_pending ON jobs(subitem_id) WHERE state='pending';
+    `);
+    // Migration for state files created before job kinds existed.
+    const cols = this.db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "kind")) this.db.exec("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'change'");
+    this.db.exec(`
+      DROP INDEX IF EXISTS jobs_one_pending;
+      CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_pending_v2 ON jobs(subitem_id, kind) WHERE state='pending';
     `);
   }
 
@@ -209,6 +216,19 @@ export class Store {
       .run(this.now(), changeId, owner);
   }
 
+  /**
+   * An applied CREATE whose record has since disappeared from monday: allow it to run again. Guarded by the
+   * exact record id so concurrent callers (or a re-created record) can never reopen it twice.
+   */
+  reopenAppliedCreate(changeId: string, missingItemId: string): boolean {
+    const r = this.db
+      .prepare(
+        "UPDATE changes SET state='failed', phase='validating', intent=NULL, result_item_id=NULL, error_code='RECORD_MISSING_REAPPLY', attempts=0, updated_at=? WHERE change_id=? AND state='applied' AND result_item_id=?",
+      )
+      .run(this.now(), changeId, missingItemId);
+    return Number(r.changes) > 0;
+  }
+
   /** Operator resolution of a manual_review (or any) change after verifying monday by hand. */
   resolveManually(changeId: string, outcome: "applied" | "not_applied"): boolean {
     const state = outcome === "applied" ? "applied" : "failed";
@@ -231,12 +251,12 @@ export class Store {
   // ---- job queue -------------------------------------------------------
 
   /** Durable enqueue; duplicates for the same subitem collapse into one pending job. */
-  enqueue(subitemId: string, expectedParentId: string | null): void {
+  enqueue(subitemId: string, expectedParentId: string | null, kind: "change" | "parent" = "change"): void {
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO jobs(subitem_id,expected_parent_id,run_after,state) VALUES(?,?,?, 'pending')",
+        "INSERT OR IGNORE INTO jobs(subitem_id,expected_parent_id,run_after,state,kind) VALUES(?,?,?, 'pending',?)",
       )
-      .run(subitemId, expectedParentId, this.now());
+      .run(subitemId, expectedParentId, this.now(), kind);
   }
 
   takeJob(): JobRow | undefined {
@@ -244,10 +264,10 @@ export class Store {
       const now = this.now();
       // revive jobs whose worker died
       this.db
-        .prepare("UPDATE jobs SET state='pending' WHERE state='running' AND locked_until<=? AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE j2.subitem_id=jobs.subitem_id AND j2.state='pending')")
+        .prepare("UPDATE jobs SET state='pending' WHERE state='running' AND locked_until<=? AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE j2.subitem_id=jobs.subitem_id AND j2.kind=jobs.kind AND j2.state='pending')")
         .run(now);
       const j = this.db
-        .prepare("SELECT id,subitem_id,expected_parent_id,attempts FROM jobs WHERE state='pending' AND run_after<=? ORDER BY id LIMIT 1")
+        .prepare("SELECT id,kind,subitem_id,expected_parent_id,attempts FROM jobs WHERE state='pending' AND run_after<=? ORDER BY id LIMIT 1")
         .get(now) as unknown as JobRow | undefined;
       if (!j) return undefined;
       this.db.prepare("UPDATE jobs SET state='running', locked_until=? WHERE id=?").run(now + this.leaseMs * 2, j.id);
@@ -261,9 +281,9 @@ export class Store {
 
   retryJob(id: number, delayMs: number) {
     // If a fresh pending job for the same subitem exists, drop this one instead.
-    const j = this.db.prepare("SELECT subitem_id FROM jobs WHERE id=?").get(id) as { subitem_id: string } | undefined;
+    const j = this.db.prepare("SELECT subitem_id, kind FROM jobs WHERE id=?").get(id) as { subitem_id: string; kind: string } | undefined;
     if (!j) return;
-    const dup = this.db.prepare("SELECT 1 AS x FROM jobs WHERE subitem_id=? AND state='pending'").get(j.subitem_id);
+    const dup = this.db.prepare("SELECT 1 AS x FROM jobs WHERE subitem_id=? AND kind=? AND state='pending'").get(j.subitem_id, j.kind);
     if (dup) {
       this.completeJob(id);
       return;
@@ -275,9 +295,9 @@ export class Store {
 
   /** Re-queue a job that could not start because the target is busy; does not count as a failed attempt. */
   deferJob(id: number, delayMs: number) {
-    const j = this.db.prepare("SELECT subitem_id FROM jobs WHERE id=?").get(id) as { subitem_id: string } | undefined;
+    const j = this.db.prepare("SELECT subitem_id, kind FROM jobs WHERE id=?").get(id) as { subitem_id: string; kind: string } | undefined;
     if (!j) return;
-    const dup = this.db.prepare("SELECT 1 AS x FROM jobs WHERE subitem_id=? AND state='pending'").get(j.subitem_id);
+    const dup = this.db.prepare("SELECT 1 AS x FROM jobs WHERE subitem_id=? AND kind=? AND state='pending'").get(j.subitem_id, j.kind);
     if (dup) return this.completeJob(id);
     this.db.prepare("UPDATE jobs SET state='pending', run_after=? WHERE id=?").run(this.now() + delayMs, id);
   }

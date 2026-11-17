@@ -141,7 +141,8 @@ export function parseChange(sub: MItem, parent: MItem): ChangeRequest {
     const p = parseWith(createSchema, data);
     requireLabel(LABELS.opCreate);
     if (!board.canCreate) throw new ValidationError("CREATE_NOT_ALLOWED");
-    if (colTarget) throw new ValidationError("CREATE_HAS_TARGET");
+    // A create never uses text_mm90g839 as input: the backend itself writes the created record id there, so on
+    // a re-run (e.g. the record was deleted and is created again) it holds a stale id. It is ignored here.
     return { ...base, board, op: "create", fields: stringify(p.fields) };
   }
 

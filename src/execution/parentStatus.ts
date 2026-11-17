@@ -4,32 +4,51 @@ import { LABELS, PARENT_BOARD_ID, PARENT_COLS, SUB_COLS } from "../mapping/board
 import type { Store } from "../store/store";
 
 /**
- * Parent application status (color_mm9085gm) from the subitems' decision and sync status, in priority order:
- *   1. any (non-rejected) subitem נכשל         → תקוע
- *   2. any (non-rejected) subitem בתהליך       → מתבצע
- *   3. there are subitems and ALL were rejected → בוטל
- *   4. every non-rejected subitem בוצע          → בוצע (rejected siblings are ignored; a subitem still
- *      pending approval is not בוצע, so it prevents this)
- *   5. anything else (e.g. טרם בוצע)            → טרם הוחל
- * Rejected subitems are never executed, so they are neither failures nor blockers. Only existing labels are used.
+ * Parent application status (color_mm9085gm) from each subitem's decision (color_mm90s5mz) and sync status (color_mm90k1tq):
+ *   1. no subitems                                          → טרם הוחל (default)
+ *   2. at least one subitem not yet approved/rejected       → בתהליך
+ *   3. every approved subitem is בוצע (rejected ones are ignored: nothing is changed for them,
+ *      so their sync status stays טרם בוצע; if all were rejected there is nothing to execute) → הושלם
+ *   4. otherwise some approved subitem is not done: nothing executed yet (all טרם בוצע) → טרם הוחל,
+ *      otherwise (in progress, failed, or partly done)      → בתהליך
+ * Only existing parent labels are used.
  */
 export function deriveApplicationStatus(subs: Array<{ decision: string; sync: string }>): string {
-  const live = subs.filter((s) => s.decision !== LABELS.rejected);
-  if (live.some((s) => s.sync === LABELS.syncFailed)) return LABELS.appStuck;
-  if (live.some((s) => s.sync === LABELS.syncRunning)) return LABELS.appRunning;
-  if (subs.length > 0 && live.length === 0) return LABELS.appCancelled;
-  if (live.length > 0 && live.every((s) => s.decision === LABELS.approved && s.sync === LABELS.syncDone))
-    return LABELS.appDone;
-  return LABELS.appNotApplied;
+  if (subs.length === 0) return LABELS.appNotApplied;
+  if (subs.some((s) => s.decision !== LABELS.approved && s.decision !== LABELS.rejected)) return LABELS.appRunning;
+  const approved = subs.filter((s) => s.decision === LABELS.approved);
+  if (approved.every((s) => s.sync === LABELS.syncDone)) return LABELS.appDone;
+  const untouched = approved.every((s) => s.sync === LABELS.syncNotDone || s.sync === "");
+  return untouched ? LABELS.appNotApplied : LABELS.appRunning;
+}
+
+/**
+ * The parent column's labels have been renamed before. Each wanted status lists the existing labels that may
+ * express it, in order of preference. Only labels that exist on the live column are ever written; nothing is created.
+ */
+const LABEL_CANDIDATES: Record<string, string[]> = {
+  [LABELS.appRunning]: [LABELS.appRunning, "מתבצע"],
+  [LABELS.appDone]: [LABELS.appDone, "בוצע"],
+  [LABELS.appNotApplied]: [LABELS.appNotApplied],
+};
+
+export function resolveParentLabel(wanted: string, live: string[]): string | null {
+  const have = new Set(live);
+  return (LABEL_CANDIDATES[wanted] ?? [wanted]).find((l) => have.has(l)) ?? null;
 }
 
 /** One calculation from CURRENT monday state; writes only if the parent label differs. Returns the label. */
-export async function syncParentOnce(api: MondayApi, parentId: string): Promise<string | null> {
+export async function syncParentOnce(api: MondayApi, parentId: string, liveLabels?: string[]): Promise<string | null> {
   const [parent, subs] = await Promise.all([api.getItem(parentId), api.listSubitems(parentId)]);
   if (!parent || parent.boardId !== PARENT_BOARD_ID) return null;
-  const label = deriveApplicationStatus(
+  const labels =
+    liveLabels ??
+    ((await api.getBoardColumns(PARENT_BOARD_ID)).find((c) => c.id === PARENT_COLS.application)?.labels ?? []).map((l) => l.label);
+  const wanted = deriveApplicationStatus(
     subs.map((s) => ({ decision: text(s, SUB_COLS.decision), sync: text(s, SUB_COLS.sync) })),
   );
+  const label = resolveParentLabel(wanted, labels);
+  if (!label) throw new Error("PARENT_STATUS_LABEL_MISSING");
   if (text(parent, PARENT_COLS.application) !== label) {
     // Only the application-status column is written; the reviewer's decisions are never touched.
     await api.changeColumns(PARENT_BOARD_ID, parentId, { [PARENT_COLS.application]: { label } });
@@ -76,7 +95,7 @@ export class ParentStatusSync {
             this.log.info("parent_status_synced", { parentId, label });
           } catch (e) {
             this.store.markParentDirty(parentId); // keep for the sweeper
-            this.log.warn("parent_status_update_failed", { parentId, err: e as Error });
+            this.log.warn("parent_status_update_failed", { parentId, err: e as Error, code: (e as { code?: string }).code });
             failed = true;
             break;
           }

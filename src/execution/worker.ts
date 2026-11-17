@@ -23,7 +23,8 @@ export class Worker {
       if (!job) return n;
       n++;
       try {
-        await this.exec.process(job.subitem_id, job.expected_parent_id);
+        if (job.kind === "parent") await this.exec.refreshParentOfSubitem(job.subitem_id);
+        else await this.exec.process(job.subitem_id, job.expected_parent_id);
         this.store.completeJob(job.id);
       } catch (e) {
         if (e instanceof DeferredError) {

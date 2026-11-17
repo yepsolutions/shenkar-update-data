@@ -24,6 +24,7 @@ const app = createApp({ store, log, config, executor });
 
 const server = app.listen(config.PORT, () => {
   log.info("listening", { port: config.PORT, dryRun: config.DRY_RUN });
+  if (!config.WEBHOOK_TOKEN && !config.MONDAY_SIGNING_SECRET) log.warn("webhook endpoint has no authentication configured");
   if (config.DRY_RUN) log.warn("DRY_RUN is on: monday is read-only, nothing will be written");
 });
 worker.start();

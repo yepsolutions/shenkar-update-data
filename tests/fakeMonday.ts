@@ -11,7 +11,7 @@ export const SCHEMAS: Record<string, ColumnDef[]> = {
     { id: "alumni_name", type: "text" },
     { id: "ext_req_id", type: "text" },
     { id: "req_status", type: "status", labels: L(["ממתין לטיפול", "אושר במלואו"]) },
-    { id: "color_mm9085gm", type: "status", labels: L(["מתבצע", "בוצע", "תקוע", "בוטל", "טרם הוחל"]) },
+    { id: "color_mm9085gm", type: "status", labels: L(["טרם הוחל", "הושלם", "בתהליך"]) },
   ],
   [SUBITEM_BOARD_ID]: [
     { id: "color_mm90s5mz", type: "status", labels: L(["מאושר", "נדחה", "ממתין לאישור"]) },
