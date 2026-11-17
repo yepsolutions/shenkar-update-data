@@ -131,3 +131,27 @@ describe("worker.kick (serverless hosts only give CPU during a request)", () => 
     expect(w.store.pendingJobCount()).toBe(0);
   });
 });
+
+describe("duplicate guard on create", () => {
+  it("an identical record already on the board is adopted, not duplicated", async () => {
+    const w = world();
+    const first = createSub(w);
+    await w.exec.process(first);
+    expect(careers(w)).toHaveLength(1);
+    const second = createSub(w); // a new approval row asking for exactly the same record
+    const r = await w.exec.process(second);
+    expect(r.status).toBe("applied");
+    expect(creates(w)).toHaveLength(1);
+    expect(careers(w)).toHaveLength(1);
+    expect(w.fake.col(second, "text_mm90g839")).toBe(careers(w)[0]!.id);
+  });
+
+  it("a different record for the same graduate is still created", async () => {
+    const w = world();
+    await w.exec.process(createSub(w));
+    const other = JSON.stringify({ schemaVersion: 1, fields: { company: "Other Co", job_title: "מעצבת מוצר" } });
+    const s = addSub(w, { board: "תעסוקה", op: "הוספה", field: "__new_record__", newValue: other });
+    await w.exec.process(s);
+    expect(careers(w)).toHaveLength(2);
+  });
+});

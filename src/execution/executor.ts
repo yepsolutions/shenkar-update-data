@@ -302,7 +302,13 @@ export class Executor {
       await api.changeColumns(plan.boardId, plan.itemId, plan.values);
       return null;
     }
-    if (plan.kind === "create") return api.createItem(plan.boardId, plan.name, plan.values);
+    if (plan.kind === "create") {
+      if (plan.existingId) {
+        this.d.log.info("create_skipped_identical_exists", { itemId: plan.existingId, board: plan.boardId });
+        return plan.existingId;
+      }
+      return api.createItem(plan.boardId, plan.name, plan.values);
+    }
     await api.archiveItem(plan.itemId);
     return null;
   }

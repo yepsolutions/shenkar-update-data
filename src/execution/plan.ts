@@ -33,6 +33,8 @@ export type Plan =
       baselineIds: string[];
       after: Record<string, string>;
       types: Record<string, string>;
+      /** An identical record this graduate already has: adopt it instead of creating a duplicate. */
+      existingId?: string;
     }
   | { kind: "archive"; boardId: string; itemId: string }
   | {
@@ -140,9 +142,17 @@ export async function buildPlan(req: ChangeRequest, deps: PlanDeps): Promise<Pla
     if (spec.requireAnyOf?.length && !spec.requireAnyOf.some((k) => (req.fields[k] ?? "").trim() !== ""))
       throw new ValidationError("REQUIRED_FIELD_MISSING");
     values[spec.ownerColumn] = req.nationalId;
-    const baseline = (await deps.api.findItemsByColumn(spec.id, spec.ownerColumn, req.nationalId))
-      .filter((i) => i.boardId === spec.id)
-      .map((i) => i.id);
+    const ownedItems = (await deps.api.findItemsByColumn(spec.id, spec.ownerColumn, req.nationalId)).filter(
+      (i) => i.boardId === spec.id,
+    );
+    const baseline = ownedItems.map((i) => i.id);
+    // Duplicate guard: the same graduate already has an active record with exactly these values.
+    const identical = ownedItems.filter(
+      (i) =>
+        i.state === "active" &&
+        (i.columns[spec.ownerColumn]?.text ?? "").trim() === req.nationalId &&
+        Object.keys(after).every((c) => hashComparable(c, comparableOfItem(types[c]!, i.columns[c])) === after[c]),
+    );
     return {
       kind: "create",
       boardId: spec.id,
@@ -153,6 +163,7 @@ export async function buildPlan(req: ChangeRequest, deps: PlanDeps): Promise<Pla
       baselineIds: baseline,
       after,
       types,
+      existingId: identical[0]?.id,
     };
   }
 
