@@ -5,7 +5,7 @@ import type { Executor } from "./executor";
 
 export class Worker {
   private timer?: NodeJS.Timeout;
-  private running = false;
+  private current?: Promise<void>;
 
   constructor(
     private readonly store: Store,
@@ -51,24 +51,53 @@ export class Worker {
     return stale.length;
   }
 
-  start() {
-    this.recoverStale();
-    void this.exec.sweepParents().catch(() => {});
-    let ticks = 0;
-    this.timer = setInterval(async () => {
-      if (this.running) return;
-      this.running = true;
+  /** Run one drain pass; concurrent callers share the same pass. */
+  private pass(extra?: () => Promise<void>): Promise<void> {
+    if (this.current) return this.current;
+    this.current = (async () => {
       try {
-        if (++ticks % 30 === 0) {
-          this.recoverStale();
-          await this.exec.sweepParents();
-        }
+        if (extra) await extra();
         await this.drain();
       } catch (e) {
         this.log.error("worker_loop_error", { err: e as Error });
       } finally {
-        this.running = false;
+        this.current = undefined;
       }
+    })();
+    return this.current;
+  }
+
+  /**
+   * Process due jobs now and wait for them, but at most maxMs. Used by the webhook handler:
+   * serverless hosts (monday code) only give the container CPU while a request is open, so
+   * background timers alone can stall for a long time after the response is sent.
+   */
+  async kick(maxMs: number): Promise<void> {
+    let t: NodeJS.Timeout | undefined;
+    await Promise.race([
+      this.pass(),
+      new Promise<void>((r) => {
+        t = setTimeout(r, maxMs);
+      }),
+    ]);
+    if (t) clearTimeout(t);
+  }
+
+  start() {
+    this.recoverStale();
+    void this.exec.sweepParents().catch(() => {});
+    let ticks = 0;
+    this.timer = setInterval(() => {
+      if (this.current) return;
+      const periodic = ++ticks % 30 === 0;
+      void this.pass(
+        periodic
+          ? async () => {
+              this.recoverStale();
+              await this.exec.sweepParents();
+            }
+          : undefined,
+      );
     }, this.pollMs);
     this.timer.unref();
   }

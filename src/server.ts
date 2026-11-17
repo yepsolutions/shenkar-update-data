@@ -42,7 +42,7 @@ const executor = new Executor({
   convert: { phoneCountry: config.DEFAULT_PHONE_COUNTRY },
 });
 const worker = new Worker(store, executor, log);
-const app = createApp({ store, log, config, executor });
+const app = createApp({ store, log, config, executor, kick: () => worker.kick(20_000) });
 
 const server = app.listen(config.PORT, () => {
   log.info("listening", { port: config.PORT });

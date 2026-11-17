@@ -6,14 +6,14 @@ import type { Store } from "./store/store";
 import { safeEqual } from "./webhook/auth";
 import { webhookRouter } from "./webhook/router";
 
-export function createApp(deps: { store: Store; log: Logger; config: Config; executor?: Executor }) {
-  const { store, log, config } = deps;
+export function createApp(deps: { store: Store; log: Logger; config: Config; executor?: Executor; kick?: () => Promise<void> }) {
+  const { store, log, config, kick } = deps;
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "100kb" }));
 
   app.get("/healthz", (_req, res) => res.json({ ok: true }));
-  app.use(webhookRouter({ store, log, config }));
+  app.use(webhookRouter({ store, log, config, kick }));
 
   // Minimal operator endpoints (disabled unless ADMIN_TOKEN is set).
   const admin = express.Router();

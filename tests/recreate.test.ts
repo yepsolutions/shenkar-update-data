@@ -120,3 +120,14 @@ describe("applied CREATE whose record disappeared is created again", () => {
     expect(w.fake.col("400", "company")).toBe("מישהו שינה");
   });
 });
+
+describe("worker.kick (serverless hosts only give CPU during a request)", () => {
+  it("processes queued jobs before returning, and concurrent kicks share one pass", async () => {
+    const w = world();
+    const s = createSub(w);
+    w.store.enqueue(s, PARENT);
+    await Promise.all([w.worker.kick(5000), w.worker.kick(5000)]);
+    expect(creates(w)).toHaveLength(1);
+    expect(w.store.pendingJobCount()).toBe(0);
+  });
+});

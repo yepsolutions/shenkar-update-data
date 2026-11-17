@@ -24,11 +24,11 @@ const eventSchema = z
 /** Pulled from the (loosely documented) payload: value.label.text for status columns. */
 const statusLabel = (v: any): string => (typeof v?.label?.text === "string" ? v.label.text : "");
 
-export function webhookRouter(deps: { store: Store; log: Logger; config: Pick<Config, "WEBHOOK_TOKEN" | "MONDAY_SIGNING_SECRET"> }) {
-  const { store, log, config } = deps;
+export function webhookRouter(deps: { store: Store; log: Logger; config: Pick<Config, "WEBHOOK_TOKEN" | "MONDAY_SIGNING_SECRET">; kick?: () => Promise<void> }) {
+  const { store, log, config, kick } = deps;
   const r = Router();
 
-  r.post("/handle-approval", (req: Request, res: Response) => {
+  r.post("/handle-approval", async (req: Request, res: Response) => {
     const body = req.body;
 
     // 1. Challenge handshake comes FIRST, before auth or any other processing.
@@ -74,6 +74,7 @@ export function webhookRouter(deps: { store: Store; log: Logger; config: Pick<Co
       // The parent's application status follows the decisions, so any decision change recalculates it.
       store.enqueue(subitemId, ev.parentItemId ?? null, "parent");
       log.info("webhook_parent_refresh_enqueued", { subitemId });
+      if (kick) await kick();
       res.status(200).json({ ok: true, parentRefresh: true });
       return;
     }
@@ -82,6 +83,7 @@ export function webhookRouter(deps: { store: Store; log: Logger; config: Pick<Co
     // 4. Durable enqueue, then acknowledge. The executor re-fetches and re-verifies everything.
     store.enqueue(subitemId, ev.parentItemId ?? null);
     log.info("webhook_enqueued", { subitemId });
+    if (kick) await kick();
     res.status(200).json({ ok: true });
   });
 
