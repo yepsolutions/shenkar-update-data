@@ -10,7 +10,7 @@ import { LeaseLostError } from "../errors";
 
 const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
 
-export type ChangeState = "processing" | "applied" | "failed" | "manual_review" | "dry_run";
+export type ChangeState = "processing" | "applied" | "failed" | "manual_review";
 export type Phase = "validating" | "mutating" | "mutated";
 
 export interface ChangeRow {
@@ -139,7 +139,7 @@ export class Store {
       if (row.state === "processing" && row.lease_expires_at > now) return { acquired: false, reason: "in_progress" };
       if (row.state === "failed" && row.attempts >= this.maxAttempts) return { acquired: false, reason: "max_attempts" };
 
-      // failed / dry_run → restart from validation; expired processing lease → resume at recorded phase.
+      // failed → restart from validation; expired processing lease → resume at recorded phase.
       const phase: Phase = row.state === "processing" ? row.phase : "validating";
       const intent = row.state === "processing" ? row.intent : null;
       this.db

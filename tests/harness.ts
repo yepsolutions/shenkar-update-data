@@ -18,7 +18,7 @@ export interface World {
   clock: { t: number };
 }
 
-export function world(opts: { dryRun?: boolean; reqType?: string } = {}): World {
+export function world(opts: { reqType?: string } = {}): World {
   const fake = new FakeMonday();
   const clock = { t: 1_000_000 };
   const store = new Store(":memory:", () => clock.t, 60_000, 5);
@@ -27,7 +27,6 @@ export function world(opts: { dryRun?: boolean; reqType?: string } = {}): World 
     store,
     schema: new SchemaGuard(fake, 600_000, () => clock.t),
     log: silentLogger,
-    dryRun: opts.dryRun ?? false,
     convert: { phoneCountry: "IL" },
   });
   const worker = new Worker(store, exec, silentLogger, 1000, 3);

@@ -88,10 +88,10 @@ subitem completes the request. Only labels that exist on the live parent column 
 column: the approval decisions and the reviewer's `req_status` are never touched. Parent-label problems never block applying a change.
 Concurrency: refreshes are serialized per parent by a durable leased lock + dirty flag; the holder recalculates from fresh monday state
 until no newer request arrived, so a stale calculation can never be the last write. A failed parent update never affects the subitem
-result: the parent stays dirty and the worker's periodic sweep retries it. Under `DRY_RUN=true` nothing is written.
+result: the parent stays dirty and the worker's periodic sweep retries it.
 
 ## Environment
-See `.env.example`. Required: `MONDAY_API_TOKEN`. `WEBHOOK_TOKEN` is optional (if set, the webhook URL must end with `?token=<value>`; if unset the endpoint is open, which is safe because events only enqueue a subitem id and everything is re-verified in monday). **`DRY_RUN` defaults to `true`** (reads + validation only, zero monday writes); set `DRY_RUN=false` explicitly to go live.
+See `.env.example`. Required: `MONDAY_API_TOKEN`. `WEBHOOK_TOKEN` is optional (if set, the webhook URL must end with `?token=<value>`; if unset the endpoint is open, which is safe because events only enqueue a subitem id and everything is re-verified in monday).
 
 ## Local development
 ```bash
@@ -117,15 +117,16 @@ mutation {
 }
 ```
 (URL max 255 chars.) Failed deliveries are retried by monday once a minute for 30 minutes — handled idempotently. Optionally create the webhook with an integration-app token and set `MONDAY_SIGNING_SECRET` to also verify the JWT.
-**Do this only after dry-run validation (below).**
-
-## Go-live checklist
-1. Run with `DRY_RUN=true`, approve a test subitem, check logs for `dry_run_plan` and `GET /admin/changes/:id` (state `dry_run`).
-2. Resolve the gaps in the report (contract vs. live data) first.
-3. Set `DRY_RUN=false`, test on a sandbox request.
 
 ## Operator endpoints (need `ADMIN_TOKEN`)
 `GET /admin/changes/:changeId`; `POST /admin/changes/:changeId/resolve {"outcome":"applied"|"not_applied"}` after verifying monday by hand for a `manual_review` change.
 
 ## Logging
 JSON lines; only ids, states and error codes. Keys that can carry personal data/secrets are redacted by an allow-by-default **deny-list** in `logger.ts`.
+
+## Deploying to monday code (`npm run deploy`)
+`npm run deploy` builds and runs `mapps code:push`. **Do not deploy yet:** the idempotency/crash-recovery state lives in a local SQLite
+file (`DB_PATH`), and monday code containers have no persistent disk. After a restart or redeploy the state is lost, so already-applied
+changes would be processed again (duplicate record creation, updates re-applied). Needed first: move the state store to a persistent
+backend (monday's managed database or an external DB) and keep a single writer. Also required: `mapps init` (app id / `.mappsrc`),
+environment variables via `mapps code:env`, listening on the port monday code expects, and a Node version with `node:sqlite` (or the new store).

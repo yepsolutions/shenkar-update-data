@@ -213,15 +213,6 @@ describe("parent status integration", () => {
     expect(parentStatus(w)).toBe("הושלם");
   });
 
-  it("DRY_RUN writes nothing, including the rejected subitems' sync", async () => {
-    const w = world({ dryRun: true });
-    careerRecord(w);
-    const r = upd(w, "R", R);
-    w.store.enqueue(r, PARENT, "parent");
-    await w.worker.drain();
-    expect(w.fake.mutations).toHaveLength(0);
-  });
-
   it("while an approved change is executing the parent shows בתהליך", async () => {
     const w = world();
     careerRecord(w);
@@ -286,15 +277,6 @@ describe("parent status integration", () => {
     fail = false;
     expect(await w.exec.sweepParents()).toBe(1);
     expect(parentStatus(w)).toBe("הושלם");
-  });
-
-  it("DRY_RUN performs no parent writes, including for decision-change jobs", async () => {
-    const w = world({ dryRun: true });
-    careerRecord(w);
-    const a = upd(w, "A", R);
-    w.store.enqueue(a, PARENT, "parent");
-    await w.worker.drain();
-    expect(w.fake.mutations).toHaveLength(0);
   });
 
   it("ignores parent-refresh jobs for missing or foreign items", async () => {

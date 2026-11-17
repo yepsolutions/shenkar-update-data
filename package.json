@@ -12,8 +12,9 @@
     "dev": "concurrently -n server,tunnel -c cyan,magenta \"npm:dev:server\" \"npm:dev:tunnel\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "dev:server": "tsx watch --env-file-if-exists=.env src/server.ts",
-    "dev:tunnel": "mapps tunnel:create -p 3000"
+    "dev:server": "PORT=3000 tsx watch --env-file-if-exists=.env src/server.ts",
+    "dev:tunnel": "mapps tunnel:create -p 3000",
+    "deploy": "npm run build && mapps code:push"
   },
   "dependencies": {
     "express": "^4.21.2",

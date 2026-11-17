@@ -23,20 +23,19 @@ export interface ExecutorDeps {
   store: Store;
   schema: SchemaGuard;
   log: Logger;
-  dryRun: boolean;
   convert: ConvertOpts;
 }
 
 export type Outcome =
   | { status: "ignored"; reason: string }
   | { status: "skipped"; reason: string; changeId: string }
-  | { status: "applied" | "failed" | "manual_review" | "dry_run" | "lease_lost"; changeId: string; code?: string };
+  | { status: "applied" | "failed" | "manual_review" | "lease_lost"; changeId: string; code?: string };
 
 export class Executor {
   private readonly parents: ParentStatusSync;
 
   constructor(private readonly d: ExecutorDeps) {
-    this.parents = new ParentStatusSync(d.api, d.store, d.log, d.dryRun);
+    this.parents = new ParentStatusSync(d.api, d.store, d.log);
   }
 
   /** For an applied create: the id of its record if that record no longer exists/active on the expected board. */
@@ -68,7 +67,6 @@ export class Executor {
   }
 
   private async setSync(subitemId: string, label: string, extra: Record<string, unknown> = {}) {
-    if (this.d.dryRun) return;
     try {
       await this.d.api.changeColumns(SUBITEM_BOARD_ID, subitemId, { [SUB_COLS.sync]: { label }, ...extra });
     } catch (e) {
@@ -109,7 +107,7 @@ export class Executor {
     }
 
     let claim = store.claim(changeId, subitemId, sub.parentId ?? null);
-    if (!claim.acquired && claim.reason === "applied" && !this.d.dryRun) {
+    if (!claim.acquired && claim.reason === "applied") {
       // Safety net for created records: if the record this change created is gone, create it again.
       const missing = await this.missingCreatedRecord(changeId);
       if (missing && store.reopenAppliedCreate(changeId, missing)) {
@@ -243,18 +241,6 @@ export class Executor {
     }
     const plan = await buildPlan(req, this.d);
     store.renew(changeId, owner);
-
-    if (this.d.dryRun) {
-      log.info("dry_run_plan", {
-        changeId,
-        kind: plan.kind,
-        board: req.board.key,
-        columns: Object.keys(plan.kind === "archive" ? {} : plan.values).join(","),
-        targets: plan.kind === "opt_out" ? plan.targets.length : undefined,
-      });
-      store.finish(changeId, owner, "dry_run", "DRY_RUN");
-      return { status: "dry_run", changeId };
-    }
 
     if (plan.kind === "opt_out") {
       log.info("opt_out_plan", { changeId, targets: plan.targets.length, skippedOwnership: plan.skippedOwnership });

@@ -104,22 +104,6 @@ describe("applied CREATE whose record disappeared is created again", () => {
     expect(creates(w)).toHaveLength(2);
   });
 
-  it("dry-run never reopens or recreates", async () => {
-    const w = world();
-    const s = createSub(w);
-    await w.exec.process(s);
-    const dry = world({ dryRun: true });
-    expect(dry.fake.mutations).toHaveLength(0);
-    w.fake.items.delete(careers(w)[0]!.id);
-    // same store, dry-run executor
-    const { Executor } = await import("../src/execution/executor");
-    const { SchemaGuard } = await import("../src/monday/schema");
-    const { silentLogger } = await import("../src/logger");
-    const dryExec = new Executor({ api: w.fake, store: w.store, schema: new SchemaGuard(w.fake), log: silentLogger, dryRun: true, convert: { phoneCountry: "IL" } });
-    expect(await dryExec.process(s)).toMatchObject({ status: "skipped", reason: "applied" });
-    expect(creates(w)).toHaveLength(1);
-  });
-
   it("updates, deletes and opt-outs that were applied are NEVER re-applied", async () => {
     const w = world();
     careerRecord(w);

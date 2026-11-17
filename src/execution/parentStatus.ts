@@ -74,18 +74,16 @@ export class ParentStatusSync {
     private readonly api: MondayApi,
     private readonly store: Store,
     private readonly log: Logger,
-    private readonly dryRun: boolean,
   ) {}
 
   async refresh(parentId: string | undefined | null): Promise<void> {
-    if (this.dryRun || !parentId) return;
+    if (!parentId) return;
     this.store.markParentDirty(parentId);
     await this.drain(parentId);
   }
 
   /** Retry parents left dirty by an API failure or a crashed holder. */
   async sweep(): Promise<number> {
-    if (this.dryRun) return 0;
     const ids = this.store.dirtyParents();
     for (const id of ids) await this.drain(id);
     return ids.length;

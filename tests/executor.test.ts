@@ -248,11 +248,4 @@ describe("safety rules", () => {
     expect(await run(w, s)).toMatchObject({ code: "SCHEMA_DRIFT" });
   });
 
-  it("dry-run reads and validates but never writes", async () => {
-    const w = world({ dryRun: true });
-    careerRecord(w);
-    const s = addSub(w, { board: "תעסוקה", op: "עדכון", field: "company", existing: "Atera", newValue: "X", target: "400" });
-    expect((await run(w, s)).status).toBe("dry_run");
-    expect(w.fake.mutations).toHaveLength(0);
-  });
 });

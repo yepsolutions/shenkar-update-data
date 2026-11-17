@@ -40,11 +40,8 @@ describe("logging & config", () => {
     createLogger("info", (l) => lines.push(l)).info("x", { changeId: "CHG-1", token: "secret" });
     expect(lines[0]).not.toContain("secret");
   });
-  it("defaults to dry-run and requires explicit DRY_RUN=false", () => {
+  it("validates the webhook token and treats an empty one as unset", () => {
     const base = { MONDAY_API_TOKEN: "x".repeat(20), WEBHOOK_TOKEN: "w".repeat(24) };
-    expect(loadConfig(base).DRY_RUN).toBe(true);
-    expect(loadConfig({ ...base, DRY_RUN: "" }).DRY_RUN).toBe(true);
-    expect(loadConfig({ ...base, DRY_RUN: "false" }).DRY_RUN).toBe(false);
     expect(() => loadConfig({ ...base, WEBHOOK_TOKEN: "short" })).toThrow(/WEBHOOK_TOKEN/);
     expect(loadConfig({ MONDAY_API_TOKEN: base.MONDAY_API_TOKEN }).WEBHOOK_TOKEN).toBeUndefined();
     expect(loadConfig({ ...base, WEBHOOK_TOKEN: "" }).WEBHOOK_TOKEN).toBeUndefined();

@@ -12,7 +12,7 @@ export function createApp(deps: { store: Store; log: Logger; config: Config; exe
   app.disable("x-powered-by");
   app.use(express.json({ limit: "100kb" }));
 
-  app.get("/healthz", (_req, res) => res.json({ ok: true, dryRun: config.DRY_RUN }));
+  app.get("/healthz", (_req, res) => res.json({ ok: true }));
   app.use(webhookRouter({ store, log, config }));
 
   // Minimal operator endpoints (disabled unless ADMIN_TOKEN is set).

@@ -199,14 +199,6 @@ describe("community interest opt-out", () => {
     expect(writes(w).filter((m) => m.args.itemId === "700")).toHaveLength(0);
   });
 
-  it("dry-run reads and plans but writes nothing", async () => {
-    const w = world({ dryRun: true });
-    comm(w, "600", "מעוניין");
-    const s = optOut(w);
-    expect((await w.exec.process(s)).status).toBe("dry_run");
-    expect(w.fake.mutations).toHaveLength(0);
-  });
-
   it("an ordinary interest_status update from the portal is still a regular single-field update", async () => {
     const w = world();
     comm(w, "600", "מעוניין");
